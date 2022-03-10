@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<head>
+	<html lang="fr">
+	<meta charset="UTF-8">
+	<title>PWCClient jeu R2D2</title>
+	<style>
+		#playground img {
+			position: absolute;
+		}
+	</style>
+</head>
+<body style="background-color: black; color: darkred; font-size: 20px">
+	<h1>R2D2 échappe à l'Empereur</h1>
+	<div id="introduction">
+		<p>R2D2 doit réunir 30 soutiens pour pouvoir s'échapper. À chaque dizaine qu'il réunit l'Empereur s'agace !
+		<br>
+		Chaque DarkVador ou vaisseau d'Anakin, en violet, détruit trois soutiens, les vaisseaux de l'Alliance en font gagner un.</p>
+	</div>
+	<div id="bind" style="color: #DDD">R2D2 se déplace grâce à ZQSD ou aux flèches directionnelles, il peut utiliser V pour mettre en pause et C pour l'enlever. Appuie sur C pour Commencer !</div>
+	<div id="information" style="margin-right: 10px; color: rgb(60, 88, 216); font-size: 30px"> Score : <span id="score"></span> | <span id="status"></span></div>
+	<div id="playground" style='height: 700px; width: 1000px; background: url("images/fonds/grass_green.jpg")'></div>
+	
+	<!-- Partie Javascript -->
+	<script>
+		"use strict";
+		//POSITION---------------------------------------
+		class Position {
+			constructor(x,y) {
+				if (this == undefined || this == window) {
+					return new Position(x,y);
+				}
+				this.x = x;
+				this.y = y;
+			};
+	
+			// Ajoute une position à this
+			add = function(position= new Position()) {
+				this.x += position.x;
+				this.y += position.y;
+			};
+		};
+
+		//SPRITE---------------------------------------
+		class Sprite {
+			constructor (imgPath, insideDOM= window.document.getElementById("playground"), position= new Position(500, 500), id=0) {
+				this.position = position;
+				let img = document.createElement("img");
+				img.setAttribute("src", imgPath);
+				img.setAttribute("id", id);
+				if(id==0) {
+					img.setAttribute("width",70);
+					img.setAttribute("height",75);
+				}
+				else {
+					img.setAttribute("width",100);
+					img.setAttribute("height",100);
+				}
+				this.DOM = insideDOM.appendChild(img);
+				this.vitesseX = 0;
+				this.vitesseY = 0;
+				this.id = id;
+			};
+
+			// Redéfinie dans les classes filles
+			// Déplace le Sprite à une nouvelle Position
+			moveTo = function(pos=new Position()) {};
+		
+			// Déplace le Sprite relativement à sa Position actuelle, à une nouvelle Position
+			moveRel = function(position=new Position()) {
+				this.position.add(new Position(position.x, position.y));
+				this.moveTo(this.position);
+			};
+
+			// Calcule la nouvelle Position d'après une durée et la vitesse puis appelle moveRel()
+			moveFrame = function(duration) {
+				let x = this.vitesseX * duration / 1000;
+				let y = this.vitesseY * duration / 1000;
+				this.moveRel(new Position(x,y));
+			}
+
+			// Renvoie la Hitbox associée au Sprite
+			getHitbox = function() {
+				this.size = {width : this.DOM.width, height : this.DOM.height};
+			}
+		}
+
+		//ROBOT---------------------------------------
+		class Robot extends Sprite {
+			constructor(imgPath="images/vaisseaux/R2D2.png",insideDOM=window.document.getElementById("playground")) {
+				super(imgPath, insideDOM);
+			}
+
+			// Réécriture de la méthode moveTo() héritée
+			moveTo = function(position=new Position()) {
+				// Changement de position si le robot est dans le playground
+				if (position.x <= largeur - this.DOM.clientWidth && position.x >= 0) {
+					this.DOM.style.left = position.x+"px";
+				}
+				if (position.y <= (playgroundOffsetTop + hauteur) - this.DOM.clientHeight && position.y >= playgroundOffsetTop) {
+					this.DOM.style.top = position.y+"px";
+				}
+			};
+		}
+
+		//vaisseau---------------------------------------
+		class Vaisseau extends Sprite {
+			constructor(side, position= new Position(100,50), imgPath, id, insideDOM= window.document.getElementById("playground")) {
+				super(imgPath, insideDOM, position, id);
+				this.side = side;
+			}
+
+			// Detecte si deux elements se supperposent
+			areIntersecting = function(item1,item2) {
+				if((item1.position.y + item1.size.height) > item2.position.y &&
+				item1.position.x < (item2.position.x + item2.size.height) &&
+				item1.position.y < (item2.position.y + item2.size.height) &&
+				(item1.position.x + item1.size.width) > item2.position.x ) {
+					return true;
+				}
+			}
+
+			// Réécriture de la méthode moveTo() héritée
+			moveTo = function(position= new Position(), whenOutOfPlayground = function(position) {
+				this.remove();
+			}) {
+				// Changement de Position si le Vaisseau est dans le playground
+				if (position.x <= largeur - this.DOM.clientWidth && position.x >= 0) {
+					this.DOM.style.left = position.x+"px";
+				} else{
+					whenOutOfPlayground.call(this, position);
+				}
+				if (position.y <= (playgroundOffsetTop + hauteur) - this.DOM.clientHeight && position.y >= playgroundOffsetTop) {
+					this.DOM.style.top = position.y+"px";
+				} else{
+					whenOutOfPlayground.call(this, position);
+				}
+			};
+
+			remove = function() {
+				const id = this.id;
+				delete jeu.listVaisseau[id];
+				this.DOM.remove();
+			};
+		}
+		// Définition de constantes statiques de classe
+		Object.defineProperty(Vaisseau, "ALLIANCE", { value: "alliance" });
+		Object.defineProperty(Vaisseau, "EMPIRE", { value: "empire" });
+
+		//KEYCONTROL---------------------------------------
+		// À l'appuie l'action est effectuée et elle se termine à la relâche de la touche
+		window.onkeydown = function (event) {
+			changeKeyValue(event.key, true);
+		};
+		window.onkeyup = function (event) {
+			changeKeyValue(event.key, false);
+		};
+
+		// Attribution des touches
+		function changeKeyValue(eventKey, value) {
+			switch (eventKey) {
+				case "ArrowUp":
+				case "z":
+					jeu.haut = value;
+					break;
+				case "ArrowDown":
+				case "s":
+					jeu.bas = value;
+					break;
+				case "ArrowRight":
+				case "d":
+					jeu.droite = value;
+					break;
+				case "ArrowLeft":
+				case "q":
+					jeu.gauche = value;
+					break;
+				case "v":
+					jeu.run = false;
+					break;
+				case "c":
+					jeu.run = true;
+					jeu.continue = true;
+					jeu.stopMain = window.requestAnimationFrame( main );
+					break;
+			};
+		};
+
+		//JEU---------------------------------------
+		// Constantes liées à l'aire de jeu
+		const playgroundOffsetTop = window.document.getElementById("playground").offsetTop;
+		const hauteur = 700;
+		const largeur = 1000;
+
+		// Listes des imgPath jusqu'au png des Vaisseau suivant leur side
+		const listeImageVaisseauxAlliance = {
+			0 : "images/vaisseaux/x_wing.png",
+			1 : "images/vaisseaux/naboo_starfighter.png",
+			2 : "images/vaisseaux/obi_wan_starfighter.png"
+		}
+		const listeImageVaisseauxEmpire = {
+			0 : "images/vaisseaux/darthvader.png",
+			1 : "images/vaisseaux/anakin_starfighter.png"
+		}
+
+		// Variable du jeu
+		let jeu = {
+			// Déplacement dans une direction
+			gauche : false,
+			droite : false,
+			haut : false,
+			bas : false,
+			// R2D2 joueur
+			robot : new Robot(),
+			// Liste des Vaisseau affichés
+			listVaisseau : {},
+			// État du jeu
+			run : false,
+			continue : false,
+			tFrameLast : 0,
+			tFrameGap : 0,
+			score : 0,
+			intervalApparitionVaisseau : 900,
+			vitesseRobot : 250,
+			vitesseVaisseauAlliance : 200,
+			vitesseVaisseauEmpire : 250,
+			animationStartTime : 0,
+			animationStoppedAt : 0,
+			nombreVaisseaux : 0
+		}
+
+		jeu.update = function (tFrame) {
+			let time = tFrame - this.tFrameLast;
+			this.tFrameLast = tFrame;
+
+			if (this.gauche) {
+				this.robot.getHitbox(jeu.robot.pos);
+				this.robot.vitesseX = - this.vitesseRobot;
+			} else if (this.droite) {
+				this.robot.vitesseX = this.vitesseRobot;
+			} else {
+				this.robot.vitesseX = 0;
+			}
+
+			if (this.haut) {
+				this.robot.vitesseY = - this.vitesseRobot;
+			} else if (this.bas) {
+				this.robot.vitesseY = this.vitesseRobot;
+			} else {
+				this.robot.vitesseY = 0;
+			}
+
+			// Déplacement du robot
+			jeu.robot.moveFrame(time);
+			jeu.robot.getHitbox(this.robot.pos);
+
+			// Gestion des Vaisseau présent dans le playground
+			for (let [key, vaisseau] of Object.entries(this.listVaisseau)) {
+				// Suivant le side du Vaisseau, une vitesse est attribuée
+				if (Vaisseau.ALLIANCE === vaisseau.side) {
+					vaisseau.vitesseY = jeu.vitesseVaisseauAlliance;
+				}
+				if (Vaisseau.EMPIRE === vaisseau.side) {
+					vaisseau.vitesseY = jeu.vitesseVaisseauEmpire;
+				}
+
+				// Déplacement du Vaisseau courant
+				vaisseau.moveFrame(time);
+				vaisseau.getHitbox(vaisseau.pos);
+
+				if (vaisseau.areIntersecting(this.robot, vaisseau)) {
+					// Modification du score en fonction du type de Vaisseau touché
+					if (Vaisseau.ALLIANCE === vaisseau.side) {
+						this.score += 1;
+						// Supprime le Vaisseau touché
+						vaisseau.remove();
+					}
+					if (Vaisseau.EMPIRE === vaisseau.side) {
+						this.score -= 3;
+						// Supprime le Vaisseau touché
+						vaisseau.remove();
+					}
+					manageScore();
+				}
+				// Actualisation du score
+				document.getElementById("score").textContent = this.score;
+			}
+		}
+
+		// Création d'un Vaisseau
+		function createVaisseau () {
+			if (jeu.run) {
+				// Paramètres du nouveau Vaisseau
+				const newId = jeu.nombreVaisseaux + 1;
+				const position = getRandomPosition();
+				const side = getRandomSide();
+				const image = getImage(side);
+				jeu.listVaisseau[newId] = new Vaisseau(side, position, image, newId);
+				// Incrémentation de nombreVaisseaux
+				jeu.nombreVaisseaux = newId;
+			}
+		}
+
+		let variable = setInterval(createVaisseau, jeu.intervalApparitionVaisseau);
+
+		// Renvoie un nombre aléatoire compris entre 0 et "max"
+		function getRandomInt(max) {
+			return Math.floor(Math.random() * Math.floor(max));
+		}
+
+		// Retourne de façon aléatoire le side
+		function getRandomSide() {
+			let randomInt = getRandomInt(2);
+			if (0 === randomInt) {
+				return Vaisseau.ALLIANCE;
+			}
+			if (1 === randomInt) {
+				return Vaisseau.EMPIRE;
+			}
+		}
+
+		// Retourne aléatoirement une position en haut de l'aire de jeu
+		function getRandomPosition() {
+			// x : width du playgroud - taille des Vaisseau
+			// y : haut du playground
+			return new Position (getRandomInt(largeur-100), playgroundOffsetTop);
+		}
+
+		// Retourne aléatoirement une image suivant son side
+		function getImage(side) {
+			if (Vaisseau.ALLIANCE === side) {
+				const randomInt = getRandomInt(Object.keys(listeImageVaisseauxAlliance).length);
+				return listeImageVaisseauxAlliance[randomInt];
+			}
+			if (Vaisseau.EMPIRE === side) {
+				const randomInt = getRandomInt(Object.keys(listeImageVaisseauxEmpire).length);
+				return listeImageVaisseauxEmpire[randomInt];
+			}
+		}
+
+		// Gestion des évènements en fonction du score
+		function manageScore () {
+			// Cas de Défaite
+			if (jeu.score < 0) {
+				// On arrête de générer des Vaisseau
+				clearInterval(variable);
+				// On remove() tous les Vaisseau affichés
+				for (let [key, vaisseau] of Object.entries(jeu.listVaisseau)) {
+					vaisseau.remove();
+				}
+				// On remove() le Robot joueur
+				jeu.robot.DOM.remove();
+				// On change le background et le status
+				document.getElementById("playground").style.background = "url(images/fonds/perdu.png)";
+				document.getElementById("playground").style.width = "700px";
+				document.getElementById("status").textContent = "R2D2 se fait attraper ! F5 pour re-essayer";
+				// On alert() le joueur
+				alert("C'est perdu..");
+				// Le jeu est stoppé
+				jeu.run = false;
+			}
+
+			// Stage 1
+			if (jeu.score >= 0 && jeu.score < 10) {
+				// Augmentation de la vitesse des Vaisseau
+				jeu.vitesseVaisseauEmpire = 250;
+				jeu.vitesseVaisseauAlliance = 200;
+				// Apparition de Vaisseau plus fréquente
+				jeu.intervalApparitionVaisseau = 900;
+				clearInterval(variable);
+				// On redéfini l'interval d'apparition
+				variable = setInterval(createVaisseau, jeu.intervalApparitionVaisseau);
+				document.getElementById("playground").style.background = "url(images/fonds/grass_green.jpg)";
+			}
+
+			// Stage 2
+			if (jeu.score >= 10) {
+				// Augmentation de la vitesse des Vaisseau
+				jeu.vitesseVaisseauEmpire = 350;
+				jeu.vitesseVaisseauAlliance = 250;
+				// Apparition de Vaisseau plus fréquente
+				jeu.intervalApparitionVaisseau = 300;
+				clearInterval(variable);
+				variable = setInterval(createVaisseau, jeu.intervalApparitionVaisseau);
+				document.getElementById("playground").style.background = "url(images/fonds/desert_sand.jpg)";
+			}
+
+			// Stage 3
+			if (jeu.score >= 20) {
+				// Augmentation de la vitesse des Vaisseau
+				jeu.vitesseVaisseauEmpire = 450;
+				jeu.vitesseVaisseauAlliance = 300;
+				// Apparition de Vaisseau plus fréquente
+				jeu.intervalApparitionVaisseau = 100;
+				clearInterval(variable);
+				variable = setInterval(createVaisseau, jeu.intervalApparitionVaisseau);
+				document.getElementById("playground").style.background = "url(images/fonds/lava.jpg)";
+			}
+
+			// Cas de Victoire
+			if (jeu.score >= 30) {
+				clearInterval(variable);
+				for (let [key, vaisseau] of Object.entries(jeu.listVaisseau)) {
+					vaisseau.remove();
+				}
+				jeu.robot.DOM.remove();
+				document.getElementById("playground").style.background = "url(images/fonds/victoire.jpg)";
+				document.getElementById("status").textContent = "R2D2 a réussi, grâce à toi, à échapper à l'Empereur ! F5 pour retenter";
+				alert("Victoire ! Félicitations !");
+				jeu.run = false;
+			}
+		}
+
+		//MAIN----------------------------------------------------
+		// tFrame est le temps d'appel de l'animation passé à main en ms
+		function main(tFrame) {				
+			if(jeu.run) {
+				// Changement du statut du jeu
+				document.getElementById("status").textContent = "";
+				jeu.stopMain = window.requestAnimationFrame( main );
+				if (jeu.continue){
+				// Calcul de la différence entre le tFrame du stop animation et de celui qui reprends l'animation
+				jeu.tFrameGap = tFrame - jeu.tFrameLast;
+				// Une seule définition du gap après reprise de l'animation
+				jeu.continue = false;	
+			}
+			jeu.animationStartTime = window.performance.now();
+			// Utilisation de jeuControl.js
+			jeu.update(tFrame - jeu.tFrameGap);
+			} else if(jeu.score < 0 || jeu.score >= 30) {
+
+			} else {
+				// Changement du statut du jeu
+				document.getElementById("status").textContent = "Jeu en pause.";
+			}
+		}
+		main(0);
+	</script>
+</body>
+</html>
